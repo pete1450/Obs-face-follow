@@ -1,0 +1,11 @@
+# Python dependencies for OBS Face Tracker
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Note: `obspython` is bundled with OBS Studio and should NOT be listed here.
+
+opencv-python>=4.5.0
+numpy>=1.20.0
+requests>=2.25.0
+PyQt5>=5.15.0
