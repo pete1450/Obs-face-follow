@@ -116,9 +116,8 @@ class TrackerThread(QThread):
             self._last_direction = None
 
     def stop_tracking(self):
-        """Signal the thread to stop and wait for it to finish."""
+        """Signal the thread to stop (non-blocking)."""
         self._running = False
-        self.wait(4000)
 
     # -- Internal helpers --------------------------------------------------
 
@@ -588,10 +587,40 @@ class TrackerWindow(QDialog):
         self._status_lbl.setStyleSheet("color: #2d9a2d; font-weight: bold;")
 
     def stop_tracking(self):
-        """Stop the face tracking thread."""
+        """Stop the face tracking thread (non-blocking).
+
+        Disconnects all signals before signalling the thread to stop so that
+        no queued callbacks arrive after the UI has been reset.  The thread
+        cleans itself up via Qt's ``deleteLater`` mechanism.
+        """
         if self._thread is not None:
-            self._thread.stop_tracking()
+            thread = self._thread
             self._thread = None
+
+            # Stop PTZ movement immediately before the thread winds down.
+            try:
+                thread.ptz.stop()
+            except Exception:
+                pass
+
+            # Disconnect all signals so no callbacks reach this window
+            # after we return.
+            for sig in (
+                thread.face_detected,
+                thread.no_face,
+                thread.frame_ready,
+                thread.status_update,
+                thread.error_occurred,
+            ):
+                try:
+                    sig.disconnect()
+                except Exception:
+                    pass
+
+            # Signal the thread loop to exit; it will call deleteLater once
+            # finished so Qt can reclaim the object safely.
+            thread.stop_tracking()
+            thread.finished.connect(thread.deleteLater)
 
         self._set_track_btn_active(False)
         self._status_lbl.setText("Status: Inactive")
@@ -640,6 +669,17 @@ class TrackerWindow(QDialog):
     # ------------------------------------------------------------------
     # Window lifecycle
     # ------------------------------------------------------------------
+
+    def reject(self):
+        """Override QDialog.reject() so the Escape key never hides the window.
+
+        By default QDialog hides itself when Escape is pressed (via reject →
+        hide).  In OBS, global keyboard shortcuts can forward Escape to active
+        Qt windows, which would silently hide our tracker window and leave the
+        background thread running.  Overriding reject() as a no-op prevents
+        this; the window can only be dismissed via its own Close button.
+        """
+        pass  # intentional no-op
 
     def closeEvent(self, event):
         self.stop_tracking()

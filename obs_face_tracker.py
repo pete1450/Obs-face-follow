@@ -153,18 +153,26 @@ def _open_tracker_window(props, prop) -> bool:
 
 
 def _periodic_check() -> None:
-    """
-    Periodically called by OBS to perform housekeeping.
+    """Clean up the tracker-window reference when the window has been closed.
 
-    If the window was closed externally we make sure the tracking thread is
-    also stopped to prevent orphaned background threads.
+    ``stop_tracking()`` is already called by the window's own ``closeEvent``,
+    so we only need to clear the module-level reference here.  We never call
+    ``stop_tracking()`` from this function because doing so would block
+    OBS's main thread while waiting for the worker thread to finish.
     """
     global _tracker_window
-    if _tracker_window is not None and not _tracker_window.isVisible():
-        try:
-            _tracker_window.stop_tracking()
-        except Exception:
-            pass
+    if _tracker_window is None:
+        return
+    try:
+        visible = _tracker_window.isVisible()
+    except RuntimeError:
+        # The underlying C++ Qt object was already destroyed.
+        _tracker_window = None
+        return
+    if not visible:
+        # The window was closed via its close button (closeEvent already
+        # stopped tracking).  Clear our reference.
+        _tracker_window = None
 
 
 # ---------------------------------------------------------------------------
