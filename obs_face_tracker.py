@@ -129,12 +129,21 @@ def _open_tracker_window(props, prop) -> bool:
             # Should not happen inside OBS, but handle it gracefully.
             app = QApplication(sys.argv)  # noqa: F841
 
-        if _tracker_window is None or not _tracker_window.isVisible():
-            _tracker_window = TrackerWindow(settings=_settings)
-            _tracker_window.show()
-        else:
-            _tracker_window.raise_()
-            _tracker_window.activateWindow()
+        if _tracker_window is not None:
+            try:
+                # Re-show the existing window (handles both visible and
+                # previously-closed-but-not-destroyed windows).
+                _tracker_window.show()
+                _tracker_window.raise_()
+                _tracker_window.activateWindow()
+                return True
+            except RuntimeError:
+                # The underlying C++ Qt object was destroyed externally.
+                # Fall through to create a fresh window.
+                _tracker_window = None
+
+        _tracker_window = TrackerWindow(settings=_settings)
+        _tracker_window.show()
 
     except ImportError as exc:
         _log_error(
@@ -153,25 +162,28 @@ def _open_tracker_window(props, prop) -> bool:
 
 
 def _periodic_check() -> None:
-    """Clean up the tracker-window reference when the window has been closed.
+    """Clear the tracker-window reference if the Qt object has been destroyed.
 
-    ``stop_tracking()`` is already called by the window's own ``closeEvent``,
-    so we only need to clear the module-level reference here.  We never call
-    ``stop_tracking()`` from this function because doing so would block
-    OBS's main thread while waiting for the worker thread to finish.
+    We never call ``stop_tracking()`` or inspect ``isVisible()`` here because:
+    * ``stop_tracking()`` blocks the main thread while the worker exits.
+    * ``isVisible()`` returns False on a window that was just created but not
+      yet shown — clearing the reference at that moment causes the very next
+      ``.show()`` call in ``_open_tracker_window`` to hit ``None.show()`` and
+      fail silently (the window never appears).
+
+    ``closeEvent`` already calls ``stop_tracking()``, so tracking is always
+    stopped when the user closes the window.
     """
     global _tracker_window
     if _tracker_window is None:
         return
     try:
-        visible = _tracker_window.isVisible()
-    except RuntimeError:
-        # The underlying C++ Qt object was already destroyed.
-        _tracker_window = None
-        return
-    if not visible:
-        # The window was closed via its close button (closeEvent already
-        # stopped tracking).  Clear our reference.
+        from PyQt5.sip import isdeleted  # noqa: PLC0415
+
+        if isdeleted(_tracker_window):
+            _tracker_window = None
+    except (ImportError, RuntimeError):
+        # sip not available or C++ object already gone.
         _tracker_window = None
 
 
